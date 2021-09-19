@@ -1,0 +1,366 @@
+---
+title: "Amazon Review Analysis"
+author: Ra'Shawn Howard
+output: html_notebook
+---
+
+# Data
+The Amazon reviews polarity [Data](https://www.kaggle.com/kritanjalijain/amazon-reviews?select=train.csv) is constructed by taking review score 1 and 2 as negative, 4 and 5 as positive. Samples of score 3 are ignored. In the dataset, class 1 is the negative and class 2 is the positive. the training set has 3.6 million observations and test set has 400,000 observations
+
+# Methods
+
+# Results
+# Limitations and Next Steps
+# Reference
++ [What is Sentiment Analysis](https://brand24.com/blog/sentiment-analysis/)
++ [look at this](https://www.richpauloo.com/post/word-cloud/)
++ [Data](https://www.kaggle.com/kritanjalijain/amazon-reviews?select=train.csv)
++ [Different Models For Data](https://paperswithcode.com/sota/sentiment-analysis-on-amazon-review-polarity)
++ [BERT Model](https://www.geeksforgeeks.org/explanation-of-bert-model-nlp/)
++ [logistic regression gif](https://mlfromscratch.com/machine-learning-introduction-8-linear-regression-and-logistic-regression/#/)
++ [Julia Silge Book](https://www.tidytextmining.com/tidytext.html)
++ [correlation and bigrams](https://www.tidytextmining.com/ngrams.html)
++ [Metrics defined](https://medium.com/@yashwant140393/the-3-pillars-of-binary-classification-accuracy-precision-recall-d2da3d09f664)
+
+```{r set-up}
+library(tidyverse)
+library(tidymodels)
+library(tidytext)
+
+knitr::opts_chunk$set(echo=FALSE, include = FALSE)
+theme_set(ggthemes::theme_hc())
+```
+
+```{r load-data}
+train <- read_csv("/Users/rashawnhoward/Downloads/train-2.csv", col_names = FALSE)
+test  <- read_csv("/Users/rashawnhoward/Downloads/test-2.csv",  col_names = FALSE)
+
+train %>% 
+  select(-X2) %>% 
+  rename(polarity = X1,
+         text = X3) %>% 
+  mutate(polarity = as.factor(polarity)) -> train
+
+train %>% 
+  unnest_tokens(word,text) -> df 
+
+head(df)
+tail(df)
+```
+
+# Discriptive Statistics
+```{r word-counts-and-correlations}
+
+
+library(wordcloud)
+library(reshape2) # for acast() function
+
+# Bar charts
+
+# Top 25 Common Words in entire Dataset
+df %>% 
+  anti_join(stop_words) %>% 
+  count(word,sort=TRUE) %>% 
+  head(25) %>% 
+  ggplot(aes(reorder(word,n),n)) +
+  geom_col(fill="lightblue") +
+  coord_flip() +
+  labs(x="",
+       y = "Count",
+       title = "Top 25 Common Words")
+    
+## Top 25 Common Words by Polarity=1
+df %>% 
+  anti_join(stop_words) %>% 
+  filter(polarity==1) %>% 
+  count(word, sort = TRUE) %>% 
+  head(25) %>% 
+  ggplot(aes(reorder(word,n),n)) +
+  geom_col(fill="lightblue") +
+  coord_flip() +
+  labs(x="",
+       y = "Count",
+       title = "Top 25 Common Words by Polarity=1")
+
+## Top 25 Common Words by Polarity=2
+df %>% 
+  anti_join(stop_words) %>% 
+  filter(polarity==2) %>% 
+  count(word, sort = TRUE) %>% 
+  head(25) %>% 
+  ggplot(aes(reorder(word,n),n)) +
+  geom_col(fill="lightblue") +
+  coord_flip() +
+  labs(x="",
+       y = "Count",
+       title = "Top 25 Common Words by Polarity=2")
+
+## Count of Polarity
+df %>% 
+  anti_join(stop_words) %>% 
+  ggplot(aes(polarity)) +
+  geom_bar(fill="lightblue") +
+  ggtitle("Count of Polarity") +
+  expand_limits(x = c(0, NA), y = c(0, NA)) +
+  scale_y_continuous(labels = unit_format(unit = "M", scale = 1e-6))
+  
+```
+
+# Correlation Analysis
+```{r bi-grams-graph}
+library(widyr)
+library(igraph)
+library(ggraph)
+
+# Take Sample of 200000 for graphs
+sample <- train %>% 
+  slice_sample(n=200000)
+
+rm(train)
+
+count_bigrams <- function(dataset) {
+  dataset %>%
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+    separate(bigram, c("word1", "word2"), sep = " ") %>%
+    filter(!word1 %in% stop_words$word,
+           !word2 %in% stop_words$word) %>%
+    count(word1, word2, sort = TRUE)
+}
+
+visualize_bigrams <- function(bigrams) {
+  set.seed(2016)
+  a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+  
+  bigrams %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a) +
+    geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+    theme_void()
+}
+
+bigram_count <- count_bigrams(sample)
+
+# filter out rare combinations, as well as digits
+bigram_count %>%
+  filter(n > 300,
+         !str_detect(word1, "\\d"),
+         !str_detect(word2, "\\d")) %>%
+  visualize_bigrams()
+```
+
+examine correlation among words, which indicates how often they appear together relative to how often they appear separately. In particular, here we’ll focus on the phi coefficient, a common measure for binary correlation. The focus of the phi coefficient is how much more likely it is that either both word X and Y appear, or neither do, than that one appears without the other.
+
+Consider the following table: [Table](https://www.tidytextmining.com/ngrams.html)
+
+For example, that n11 represents the number of documents where both word X and word Y appear, n00
+the number where neither appears, and n10 and n01 the cases where one appears without the other. In terms of this table, the phi coefficient is: [coefficient](https://www.tidytextmining.com/ngrams.html) The phi coefficient is equivalent to the Pearson correlation
+
+The pairwise_cor() function in widyr lets us find the phi coefficient between words based on how often they appear in the same section.
+
+```{r correlation-graph}
+
+section_words <- sample %>% 
+  mutate(section = row_number()) %>%
+  filter(section > 0) %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+word_cor <- section_words %>% 
+  group_by(word) %>% 
+  filter(n() > 20) %>% 
+  pairwise_cor(word, section, sort = TRUE)
+
+set.seed(2016)
+
+word_cor %>%
+  filter(correlation > .60) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+
+```
+
+# Sentiment Analysis
+a token is a meaningful unit of text, most often a word, that we are intrested in for further analysis, and tokenization is the process of splitting text into tokens
++ Use unnest_tokens() for tokenization
+stop words are common words such as (the and i ...)
++ Remove stop words with an anti_join()
+```{r}
+# Sentiment Analysis 
+# Comparision Cloud
+nums <- df %>% filter(str_detect(word, "^[0-9]")) %>% select(word) %>% unique() # regex to remove numbers
+
+df %>% 
+  anti_join(stop_words,by="word") %>% 
+  anti_join(nums, by="word") %>% 
+  left_join(get_sentiments("bing")) %>% 
+  count(word,sentiment,sort=TRUE) %>% 
+  na.omit() %>% 
+  acast(word~sentiment, value.var = "n",fill=0) %>% 
+  comparison.cloud(colors=brewer.pal(3, "Dark2"),
+                   max.words = 100)
+```
+
+# PreProcess
+```{r}
+library(textrecipes)
+
+set.seed(2012)
+train_sample <- slice_sample(train,n=400000)
+rm(train)
+
+rec1 <- recipe(polarity~text,data=train_sample) %>% 
+  step_tokenize(text) %>% # Could do n-grams(sentences)
+  step_stopwords(text) %>% 
+  step_tokenfilter(text,max_tokens = 1000) %>% # only keep 1000 tokens after removing stop words
+  step_tf(text) %>% # convert tokens into weights using tf 
+  step_normalize(all_predictors()) # model is sensitive to centering and scaling
+  
+
+rec2 <- recipe(polarity~text,data=train_sample) %>% 
+  step_tokenize(text) %>% # Could do n-grams(sentences)
+  step_stopwords(text) %>% 
+  step_tokenfilter(text,max_tokens = 1000) %>% # only keep 1000 tokens after removing stop words
+  step_tfidf(text) %>% # convert tokens into weights using tfidf (usually outperforms term frequency)
+  step_normalize(all_predictors()) # model is sensitive to centering and scaling
+```
+
+# Model Data
+```{r}
+lasso_spec <- logistic_reg(penalty = tune(), mixture = 1) %>%
+  set_engine("glmnet")
+
+lasso_wf1 <- workflow() %>% 
+  add_recipe(rec1) %>% 
+  add_model(lasso_spec)
+
+lasso_wf2 <- workflow() %>% 
+  add_recipe(rec2) %>% 
+  add_model(lasso_spec)
+```
+
+```{r}
+lambda_grid <- grid_latin_hypercube(penalty(), 
+                                    size=20)
+
+set.seed(123)
+folds <- vfold_cv(train_sample)
+```
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(2021)
+lasso_grid1 <- tune_grid(
+  lasso_wf1,
+  resamples = folds,
+  grid = lambda_grid
+)
+
+set.seed(2021)
+lasso_grid2 <- tune_grid(
+  lasso_wf2,
+  resamples = folds,
+  grid = lambda_grid
+)
+```
+
+```{r}
+lasso_grid1 %>% 
+  collect_metrics() %>% 
+  ggplot(aes(penalty,mean,color=.metric)) +
+  geom_line(size=1.5,show.legend = FALSE) +
+  facet_wrap(~.metric) +
+  scale_x_log10() +
+  ggthemes::theme_hc() + 
+  ggtitle("tf Model")
+
+lasso_grid2 %>% 
+  collect_metrics() %>% 
+  ggplot(aes(penalty,mean,color=.metric)) +
+  geom_line(size=1.5,show.legend = FALSE) +
+  facet_wrap(~.metric) +
+  scale_x_log10() +
+  ggthemes::theme_hc() + 
+  ggtitle("tf_idf Model")
+```
+
+```{r}
+best_auc <- lasso_grid2 %>% 
+  select_best("roc_auc") # get best model based on roc_auc
+
+best_auc # penalty = 0.000134932639820473
+
+final_lasso <- finalize_workflow(lasso_wf2,best_auc)
+final_lasso
+```
+
+```{r variable-importance-plots}
+library(vip)
+p2 <- final_lasso %>% 
+  fit(train) %>% 
+  pull_workflow_fit() %>% 
+  vip::vi(lambda = best_auc$penalty) %>% 
+  group_by(Sign) %>% 
+  top_n(20, wt = abs(Importance)) %>% 
+  ungroup() %>% 
+  mutate(Importance = abs(Importance),
+         Variable = str_remove(Variable,"tfidf_text_"),
+         Variable = fct_reorder(Variable,Importance)) %>% 
+  ggplot(aes(Importance,Variable,fill=Sign)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~Sign, scales = "free_y")
+p2 + ggthemes::theme_hc()
+```
+
+```{r final-model-on-train-set}
+# Use unaltered train set!
+head(train_sample)
+rec3 <- recipe(X1~.,train_sample) %>% 
+  step_rm(X2) %>% 
+  step_rename(polarity = X1,
+              text = X3) %>% 
+  step_tokenize(text) %>% # Could do n-grams(sentences)
+  step_stopwords(text) %>% 
+  step_tokenfilter(text,max_tokens = 1000) %>% # only keep 1000 tokens after removing stop words
+  step_tfidf(text) %>% # convert tokens into weights using tfidf
+  step_normalize(all_predictors())
+
+data <- rec3 %>% 
+  prep() %>% 
+  bake(new_data=NULL)
+
+head(data)
+
+spec <- logistic_reg(penalty = 0.000134932639820473, mixture = 1) %>% 
+  set_engine("glmnet") 
+
+lasso_mod <- fit(spec,
+                 factor(polarity)~.,
+                 data)
+
+```
+
+
+# Results
+```{r}
+head(test)
+test_ <- bake(prep(rec3),test)
+preds <- predict(lasso_mod,new_data = test_)
+
+test_ %>% 
+  select(polarity) %>% 
+  mutate(polarity = factor(polarity),
+         polarity = ifelse(polarity==1.0009191724383,"positive","negative"),
+         polarity = factor(polarity)) %>% 
+  bind_cols(preds) %>% 
+  mutate(.pred_class = ifelse(.pred_class==1.0009191724383,"positive","negative"),
+         .pred_class = factor(.pred_class)) %>% 
+  conf_mat(polarity,.pred_class)
+```
+
