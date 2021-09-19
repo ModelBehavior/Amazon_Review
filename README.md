@@ -1,4 +1,4 @@
-# [Amazon Review Data](https://github.com/ModelBehavior/Weekly/blob/main/Weekly.Rmd)
+# [Amazon Review Data](https://github.com/ModelBehavior/Amazon_Review/blob/main/Amazon_Analysis.Rmd)
 ### Data Description
 The Amazon reviews polarity [Data](https://www.kaggle.com/kritanjalijain/amazon-reviews?select=train.csv) is constructed by taking review score 1 and 2 as negative, 4 and 5 as positive. Samples of score 3 are ignored. In the dataset, class 1 is the negative and class 2 is the positive. the training set has 3.6 million observations and test set has 400,000 observations
 
